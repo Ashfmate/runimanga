@@ -3,23 +3,61 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
-use curl::easy::Easy;
-use ratatui::prelude::{CrosstermBackend, Terminal};
-use std::io::{stdout, Result};
+use ratatui::{backend::CrosstermBackend, style::Stylize, widgets::Paragraph, Terminal};
 
-const FPS: u32 = 60;
+use curl::easy::Easy;
+use scraper::{Html, Selector};
+use std::io::{stdout, Result, Stdout};
+// mod app;
+// mod ui;
+const FPS: u64 = 60;
 const BASE_SITE: &'static str = "https://mangareader.to";
 
 fn main() -> Result<()> {
-    let mut terminal = begin()?;
-
+    let mut buf = Vec::new();
+    {
+        let mut easy = Easy::new();
+        easy.url(format!("{BASE_SITE}/search?keyword=one+piece").as_str())
+            .unwrap();
+        let mut easy = easy.transfer();
+        easy.write_function(|data| {
+            let fragment = Html::parse_fragment(&String::from_utf8(data.to_vec()).unwrap());
+            let selector = Selector::parse("h3").unwrap();
+            buf.extend(fragment.select(&selector).map(|elem| elem.inner_html()));
+            Ok(data.len())
+        })
+        .unwrap();
+        easy.perform().unwrap();
+    };
+    let mut terminal = init()?;
+    let wdgt = Paragraph::new(buf.into_iter().fold(String::new(), |mut acc, cur| {
+        acc += &cur;
+        acc
+    }))
+    .green();
     loop {
+        terminal.draw(|frame| {
+            frame.render_widget(&wdgt, frame.size());
+        })?;
         if is_exit_pressed()? {
             break;
         }
     }
+    restore()
+}
 
-    exit()
+fn init() -> Result<Terminal<CrosstermBackend<Stdout>>> {
+    stdout().execute(EnterAlternateScreen)?;
+    enable_raw_mode()?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+    terminal.clear()?;
+    Ok(terminal)
+}
+
+fn restore() -> Result<()> {
+    stdout().execute(LeaveAlternateScreen)?;
+    disable_raw_mode()?;
+    Ok(())
 }
 
 fn is_exit_pressed() -> Result<bool> {
@@ -31,18 +69,4 @@ fn is_exit_pressed() -> Result<bool> {
         }
     }
     return Ok(false);
-}
-
-fn begin() -> Result<Terminal<CrosstermBackend<std::io::Stdout>>> {
-    stdout().execute(EnterAlternateScreen)?;
-    enable_raw_mode()?;
-    let mut terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
-    terminal.clear()?;
-    return Ok(terminal);
-}
-
-fn exit() -> Result<()> {
-    stdout().execute(LeaveAlternateScreen)?;
-    disable_raw_mode()?;
-    Ok(())
 }
